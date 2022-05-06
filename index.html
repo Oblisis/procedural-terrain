@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>Procedural Terrain</title>
+	<style>
+		body {
+			margin: 0;
+		}
+	</style>
+</head>
+
+<body>
+	<script type="importmap">
+		{
+		  "imports": {
+			"three": "https://unpkg.com/three@0.139.2/build/three.module.js"
+		  }
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'https://unpkg.com/three@0.139.2/examples/jsm/controls/OrbitControls.js';
+		import { GUI } from 'https://unpkg.com/three@0.139.2/examples/jsm/libs/lil-gui.module.min.js';
+		import { ImprovedNoise } from 'https://unpkg.com/three@0.139.2/examples/jsm/math/ImprovedNoise.js';
+
+		let camera, scene, renderer, startTime, object, stats, rotationController, noiseMapController, geometry;
+
+		init();
+		animate();
+
+		function init() {
+
+			camera = new THREE.PerspectiveCamera(36, window.innerWidth / window.innerHeight, 0.25, 10000);
+
+			camera.position.set(0, 1.3, 1000);
+
+			scene = new THREE.Scene();
+
+			// Lights
+
+			scene.add(new THREE.AmbientLight(0x505050));
+
+			const spotLight = new THREE.SpotLight(0xffffff);
+			spotLight.angle = Math.PI / 5;
+			spotLight.penumbra = 0.2;
+			spotLight.position.set(2, 500, 500);
+			spotLight.castShadow = true;
+			spotLight.shadow.camera.near = 3;
+			spotLight.shadow.camera.far = 10;
+			spotLight.shadow.mapSize.width = 1024;
+			spotLight.shadow.mapSize.height = 1024;
+			// scene.add(spotLight);
+
+			const dirLight = new THREE.DirectionalLight(0x55505a, 1);
+			dirLight.position.set(0, 3, 0);
+			dirLight.castShadow = true;
+			dirLight.shadow.camera.near = 1;
+			dirLight.shadow.camera.far = 10;
+
+			dirLight.shadow.camera.right = 1;
+			dirLight.shadow.camera.left = - 1;
+			dirLight.shadow.camera.top = 1;
+			dirLight.shadow.camera.bottom = - 1;
+
+			dirLight.shadow.mapSize.width = 1024;
+			dirLight.shadow.mapSize.height = 1024;
+			scene.add(dirLight);
+
+			// Geometry
+
+			const material = new THREE.MeshPhongMaterial({
+				color: 0x80ee10,
+				shininess: 100,
+				side: THREE.DoubleSide,
+				wireframe: true
+			});
+
+			let planeWidth = 2000;
+			let planeHeight = 2000;
+
+			let gridWidth = 128;
+			let gridHeight = 128;
+			geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, gridWidth - 1, gridHeight - 1);
+			// const data = generateHeight(gridWidth, gridHeight);
+
+			const vertices = geometry.attributes.position.array;
+			geometry.rotateX(- Math.PI / 2);
+
+			noiseMapController = {
+				seed: 1,
+				xOffset: 0,
+				yOffset: 0,
+				octaves: 4,
+				lacunarity: 2,
+				persistence: 0.5,
+				scale: 150,
+				zScale: 400,
+				radius: 1000,
+				floor: 0,
+			}
+			updateGemoetry();
+
+
+			object = new THREE.Mesh(geometry, material);
+			object.castShadow = true;
+			scene.add(object);
+
+			const ground = new THREE.Mesh(
+				new THREE.PlaneGeometry(9, 9, 1, 1),
+				new THREE.MeshPhongMaterial({ color: 0xa0adaf, shininess: 150 })
+			);
+
+			ground.rotation.x = - Math.PI / 2; // rotates X/Y to X/Z
+			ground.receiveShadow = true;
+			// scene.add(ground);
+
+
+			// Renderer
+
+			renderer = new THREE.WebGLRenderer();
+			renderer.shadowMap.enabled = true;
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			window.addEventListener('resize', onWindowResize);
+			document.body.appendChild(renderer.domElement);
+
+			// Controls
+
+			const controls = new OrbitControls(camera, renderer.domElement);
+			controls.target.set(0, 1, 0);
+			controls.update();
+
+			// GUI
+			rotationController = {
+				"xRate": 0,
+				"yRate": 0,
+			}
+
+			const gui = new GUI();
+
+			const folderRotation = gui.addFolder('Rotation');
+			folderRotation.add(rotationController, 'xRate', 0, 6)
+				.name("X Rate");
+			folderRotation.add(rotationController, 'yRate', 0, 6)
+				.name("Y Rate");
+
+			const folderNoiseMap = gui.addFolder('Noise');
+
+			folderNoiseMap.add(noiseMapController, 'seed').name('Seed').onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'xOffset', -100000, 100000, 0.1).name('X Offset').onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'yOffset', -100000, 100000, 0.1).name('Y Offset').onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'octaves', 1, 10, 1).name("Octaves").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'scale', 0.00001, 1000).name("Scale").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'lacunarity', 1, 10, 1).name("Lacunarity").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'persistence', 0, 1).name("Persistence").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'zScale', 0, 1000).name("Z Scale").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'floor', -1000, 1000).name("Floor").onChange(updateGemoetry);
+			folderNoiseMap.add(noiseMapController, 'radius', 0, 4000).name("Fall Off Radius").onChange(updateGemoetry);
+			// Start
+
+		startTime = Date.now();
+
+		}
+
+
+		function random(seed) {
+			var x = Math.sin(seed) * 10000;
+			return x - Math.floor(x);
+		}
+
+		function updateGemoetry() {
+			const perlin = new ImprovedNoise();
+
+			const positionAttribute = geometry.getAttribute('position');
+
+			const vertex = new THREE.Vector3();
+
+			const seed = noiseMapController.seed;
+			const xOffset = noiseMapController.xOffset;
+			const yOffset = noiseMapController.yOffset;
+			const octaves = noiseMapController.octaves;
+			const lacunarity = noiseMapController.lacunarity
+			const persistence = noiseMapController.persistence;
+			const scale = noiseMapController.scale;
+			const zScale = noiseMapController.zScale;
+			const radius = noiseMapController.radius;
+			const floorLim = noiseMapController.floor;
+
+			function distSq(x1, y1, x2, y2) {
+				return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
+			}
+
+			for (let i = 0; i < positionAttribute.count; i++) {
+
+				vertex.fromBufferAttribute(positionAttribute, i); // read vertex
+
+				let noise = 0;
+
+				const x = vertex.x / scale + random(seed) * 1000 + xOffset;
+				const y = vertex.z / scale + random(seed) * 1000 + yOffset;
+
+				let frequency = 1;
+				let amplitude = 1;
+				for (let j = 0; j < octaves; j++) {
+
+					noise += perlin.noise(x * frequency, y * frequency, 1) * amplitude;
+					frequency *= lacunarity;
+					amplitude *= persistence;
+
+				}
+
+
+				// noise = 1 - Math.cos((noise * Math.PI) / 2) // Smooth transitions from 0 upward
+				const dist = Math.sqrt(distSq(vertex.x, vertex.z, 0, 0));
+				let falloff = Math.max(0, Math.min(1, 1 - dist / radius)); // Islands
+				noise *= falloff // Islands
+
+
+
+				noise *= zScale
+				noise = Math.max(noise, floorLim); // Clamp it to zero
+
+				positionAttribute.setXYZ(i, vertex.x, noise, vertex.z); // write coordinates back
+			}
+
+			positionAttribute.needsUpdate = true;
+		}
+
+		function onWindowResize() {
+
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(window.innerWidth, window.innerHeight);
+
+		}
+
+		function animate() {
+
+			const currentTime = Date.now();
+			const time = (currentTime - startTime) / 1000;
+
+			requestAnimationFrame(animate);
+
+			object.position.y = 0.8;
+			object.rotation.x = time * rotationController.xRate;
+			object.rotation.y = time * rotationController.yRate;
+			object.scale.setScalar(Math.cos(time) * 0.125 + 0.875);
+
+			renderer.render(scene, camera);
+		}
+
+	</script>
+</body>
+
+</html>
